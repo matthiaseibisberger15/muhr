@@ -1,88 +1,126 @@
 <!DOCTYPE html>
 <html lang="de">
-
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="http://code.jquery.com/ui/1.10.2/themes/smoothness/jquery-ui.css">
   <title>MaturaUHR</title>
-  <script src="http://code.jquery.com/jquery-1.9.1.js"></script>
-  <script src="http://code.jquery.com/ui/1.10.2/jquery-ui.js"></script>
+  
+  <link rel="stylesheet" href="https://code.jquery.com/ui/1.12.1/themes/smoothness/jquery-ui.css">
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <script src="/socket.io/socket.io.js"></script>
-  <script>
-    function twodigits(number) {
-      var str = '0' + number;
-      str = str.substr(str.length - 2, 2);
-      return str;
-    }
-    function stopwatchstring(timedelta) {
-      var date = new Date(timedelta);
-      var str = twodigits(date.getMinutes()) + ':' +
-        twodigits(date.getSeconds());
-      return str;
-    }
 
-    var timerid = 0;
-    var socket = io.connect();
-    var lasttimedrawed = 0;
-
-    socket.on('update', function (data) {
-      clearInterval(timerid);
-      var localstarttime = Date.now() - (data.oldtime + data.updatetime - data.starttime);
-      $("#dtime").text(stopwatchstring(data.oldtime + data.updatetime - data.starttime));
-      if (data.starttime > 0) {
-        timerid = setInterval(function () {
-          var timetodraw = Date.now() - localstarttime;
-          if (timetodraw != lasttimedrawed) {
-            $("#dtime").text(stopwatchstring(timetodraw));
-            lasttimedrawed = timetodraw;
-          }
-        },
-          100);
-      } else {
-        $("#dtime").text(stopwatchstring(data.oldtime));
-      }
-    });
-
-    $(function () {
-      $("#bstart").button()
-        .click(function (event) {
-          event.preventDefault();
-          socket.emit('start', 0);
-        });
-      $("#bstop").button()
-        .click(function (event) {
-          event.preventDefault();
-          socket.emit('stop', 0);
-        });
-      $("#breset").button()
-        .click(function (event) {
-          event.preventDefault();
-          socket.emit('reset', 0);
-        });
-    });
-  </script>
   <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      background-color: #f8f9fa;
+    }
     #dtime {
-      font-family: Menlo, Consolas, Monaco, 'Lucida Console', monospace;
-      /*font-size: 100px;*/
-      text-align: center;
+      font-family: 'Courier New', Courier, monospace;
       font-size: 25vw;
+      font-weight: bold;
+      color: #333;
+      margin: 20px 0;
     }
     #buttons {
+      margin-bottom: 40px;
+    }
+    #qr-container {
+      background: white;
+      padding: 20px;
+      border-radius: 15px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.1);
       text-align: center;
     }
+    #qrcode-canvas {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 10px;
+    }
+    p { color: #666; font-size: 0.9rem; margin-top: 10px; }
   </style>
 </head>
-
 <body>
-  <div id="dtime">00:00
-  </div>
+
+  <div id="dtime">00:00</div>
+
   <div id="buttons">
     <button id="bstart">Start</button>
     <button id="bstop">Stop</button>
     <button id="breset">Reset</button>
   </div>
-</body>
 
+  <div id="qr-container">
+    <div id="qrcode-canvas"></div>
+    <p>Scannen zum Verbinden<br><b id="room-link">Warte auf Server...</b></p>
+  </div>
+
+  <script>
+    // 1. Raum-Logik
+    let roomID = window.location.pathname.substring(1);
+    if (!roomID || roomID === "") {
+        roomID = Math.floor(Math.random() * 900000) + 100000;
+        window.location.pathname = "/" + roomID;
+    }
+
+    const socket = io.connect();
+    let timerid = 0;
+    let lasttimedrawed = 0;
+
+    // 2. Hilfsfunktionen für Zeit
+    function twodigits(n) { return n < 10 ? '0' + n : n; }
+    function stopwatchstring(td) {
+        const date = new Date(td);
+        return twodigits(date.getUTCMinutes()) + ':' + twodigits(date.getUTCSeconds());
+    }
+
+    // 3. QR-Code Generierung bei Verbindung
+    socket.on('server-ip', function(data) {
+        const localUrl = "http://" + data.ip + ":" + data.port + "/" + roomID;
+        
+        document.getElementById('qrcode-canvas').innerHTML = "";
+        new QRCode(document.getElementById("qrcode-canvas"), {
+            text: localUrl,
+            width: 160,
+            height: 160
+        });
+        document.getElementById('room-link').innerText = localUrl;
+    });
+
+    // 4. Timer-Logik
+    socket.emit('join', roomID);
+
+    socket.on('update', function (data) {
+        clearInterval(timerid);
+        const localstarttime = Date.now() - (data.oldtime + data.updatetime - data.starttime);
+        
+        if (data.starttime > 0) {
+            timerid = setInterval(function () {
+                const timetodraw = Date.now() - localstarttime;
+                if (timetodraw !== lasttimedrawed) {
+                    $("#dtime").text(stopwatchstring(timetodraw));
+                    lasttimedrawed = timetodraw;
+                }
+            }, 100);
+        } else {
+            $("#dtime").text(stopwatchstring(data.oldtime));
+        }
+    });
+
+    // 5. Button-Events
+    $(function () {
+        $("button").button();
+        $("#bstart").click(() => socket.emit('start', { room: roomID }));
+        $("#bstop").click(() => socket.emit('stop', { room: roomID }));
+        $("#breset").click(() => socket.emit('reset', { room: roomID }));
+    });
+  </script>
+</body>
 </html>
